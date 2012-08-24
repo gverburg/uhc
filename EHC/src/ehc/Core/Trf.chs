@@ -54,6 +54,16 @@
 %%]
 %%[(99 codegen) import({%{EH}Core.Trf.ExplicitStackTrace})
 %%]
+%%[(8 codegen strictana) import({%{EH}Core.Trf.StrictnessAnalysis})
+%%]
+%%[(8 codegen strictana) import({%{EH}Core.Trf.StrictnessTrans1})
+%%]
+%%[(8 codegen strictana) import({%{EH}Core.Trf.StrictnessTrans2})
+%%]
+%%[(8 codegen strictana) import({%{EH}Core.Trf.StrictnessTrans3})
+%%]
+%%[(8 codegen strictana) import({%{EH}Core.Trf.StrictnessTrans4})
+%%]
 %%[(8 codegen grin) hs import(Debug.Trace)
 %%]
 
@@ -196,11 +206,21 @@ trfCore opts optimScope dataGam modNm trfcore
                ; when (targetDoesHPTAnalysis (ehcOptTarget opts))
                       t_find_null
 %%]]
-               ; when (ehcOptOptimizes Optimize_StrictnessAnalysis opts)
+               ; when (False) --ehcOptOptimizes Optimize_StrictnessAnalysis opts s)
                       (do { t_let_defbefuse
                           ; t_ana_relev
                           ; t_opt_strict
                           })
+%%[[(8 codegen strictana)
+               ; when (ehcOptOptimizes Optimize_StrictnessAnalysis opts)
+                      (do { t_strict_ana
+                          ; t_strict_t1
+                          ; t_strict_t2
+                          ; t_strict_t3
+                          ; t_strict_t4
+                          ; t_inl_letali
+                          })
+%%]]
                ; when (targetIsJavaScript (ehcOptTarget opts))
                       (do { {- t_let_flatstr
                           ; -} t_ren_uniq (emptyRenUniqOpts {renuniqOptResetOnlyInLam = True})
@@ -273,6 +293,17 @@ trfCore opts optimScope dataGam modNm trfcore
                                                                $ \s -> cmodTrfAnaRelevance opts dataGam (trfcoreInhLamMp s)
         t_opt_strict    = liftTrfInfoModExtra osm "optim-strict" lamMpPropagate
                                                                $ \s -> cmodTrfOptimizeStrictness opts (trfcoreInhLamMp s)
+%%[[(8 codegen strictana)
+        t_strict_ana    = liftTrfInfoModExtra osm "strict-ana" lamMpPropagate
+                                                        $ \s -> cmodTrfStrictnessAnalysis opts dataGam (trfcoreInhLamMp s)
+        t_strict_t1     = liftTrfMod  osm "strict-t1"          $ cmodTrfStrictnessTrans1
+        t_strict_t2     = liftTrfInfoModExtra osm "strict-t2" lamMpPropagate
+                                                        $ \s -> cmodTrfStrictnessTrans2 (trfcoreInhLamMp s)
+        t_strict_t3     = liftTrfInfoModExtra osm "strict-t3" lamMpPropagate
+                                                        $ \s -> cmodTrfStrictnessTrans3 (trfcoreInhLamMp s)
+        t_strict_t4     = liftTrfInfoModExtra osm "strict-t4" lamMpPropagate
+                                                        $ \s -> cmodTrfStrictnessTrans4 dataGam (trfcoreInhLamMp s)
+%%]]
 %%[[(9 wholeprogAnal)
         t_fix_dictfld   = liftTrfMod  osm "fix-dictfld"        $ cmodTrfFixDictFields
 %%]]

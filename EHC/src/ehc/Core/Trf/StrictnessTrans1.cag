@@ -1,0 +1,167 @@
+%%[0
+%include lhs2TeX.fmt
+%include afp.fmt
+%%]
+
+%%[doesWhat doclatex
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Strictness Transformation 1: Adding strict let bindings
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs module {%{EH}Core.Trf.StrictnessTrans1} import({%{EH}Ty},{%{EH}Base.Common},{%{EH}Opts},{%{EH}Base.Optimize},{%{EH}Core})
+%%]
+
+%%[(8 codegen strictana) hs import(Data.List, qualified Data.Map as Map)
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}AbstractCore},{%{EH}StrictnessDomain})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}LamInfo})
+%%]
+
+%%[(8 codegen strictana).WRAPPER ag import({Core/AbsSyn})
+WRAPPER CodeAGItf
+%%]
+
+%%[(99 codegen strictana)
+PRAGMA strictcase
+PRAGMA nocycle
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Haskell itf
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs export(cmodTrfStrictnessTrans1)
+cmodTrfStrictnessTrans1
+  :: CModule
+     -> CModule
+       
+cmodTrfStrictnessTrans1 
+     cmod
+  =  let  t = wrap_CodeAGItf (sem_CodeAGItf (CodeAGItf_AGItf cmod))
+                             (Inh_CodeAGItf)
+     in   cTrf_Syn_CodeAGItf t 
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Adding let!'s
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Consists of evaluating the evaluation lists and applying substitutions
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | cTrf: SELF ]
+ATTR CodeAGItf [ | | cTrf: CModule ]
+%%]
+
+%%[(8 codegen strictana)
+-- Transformed version of the module
+SEM CExpr 
+  | Ann lhs.cTrf  = if null @ann.evalL 
+                    then @cTrf
+                    else @expr.cTrf
+  | Var lhs.cTrf  = if null @lhs.evalIn
+                    then CExpr_Var (applySubst @lhs.subst @ref) 
+                    else mkStrBinds @lhs.evalIn (CExpr_Var (ACoreBindRef (hsnUniqifyEval $ acbrefNm @ref) (acbrefMbAspKey @ref)))               
+  | App lhs.cTrf  = if null @lhs.evalIn
+                    then @cTrf
+                    else mkStrBinds @lhs.evalIn @cTrf
+  | Lam lhs.cTrf  = if null @lhs.evalIn
+                    then @cTrf
+                    else mkStrBinds @lhs.evalIn @cTrf
+  | Let (binds.mkStr, lhs.cTrf) = 
+                    if @categ == CBindCateg_Plain && ((head @binds.bindNmL) `elem` @lhs.evalIn)
+                    then (True, mkStrBinds (delete (head @binds.bindNmL) @lhs.evalIn) (CExpr_Let CBindCateg_Strict @binds.cTrf @body.cTrf))
+                    else (False, mkStrBinds @lhs.evalIn @cTrf)
+  | Case lhs.cTrf = if null @lhs.evalIn
+                    then @cTrf
+                    else mkStrBinds @lhs.evalIn @cTrf                        
+
+          
+-- Extracting evaluation lists from annotations 
+ATTR CExprAnn [ | | evalL : {[HsName]}  ]
+
+SEM CExprAnn
+  | Eval     lhs.evalL = @eval
+  | * - Eval lhs.evalL = []
+
+  
+-- Propagating evaluation lists into expressions
+ATTR AllCodeNT [ evalIn : {[HsName]} | | ]
+
+SEM CodeAGItf
+  | AGItf    module.evalIn = []
+                      
+SEM CExpr
+  | Ann   expr.evalIn = @ann.evalL  
+  
+  
+-- Collecting the names of bindings                    
+ATTR CBind [ || bindNm : {HsName}]
+
+SEM CBind
+  | Bind  lhs.bindNm = @nm
+
+ATTR CBindL [ || bindNmL : {[HsName]}]
+
+SEM CBindL
+  | Cons  lhs.bindNmL = @hd.bindNm : @tl.bindNmL
+  | Nil   lhs.bindNmL = []
+
+  
+-- Propagates the information that a binding has been made strict
+-- so the names of the variables that are bound can be updated accordingly  
+ATTR CBind CBindL [ mkStr : Bool | | ] 
+
+SEM CBindL
+  | Cons  hd.mkStr = @lhs.mkStr
+          tl.mkStr = @lhs.mkStr
+
+SEM CBind
+  | Bind  lhs.cTrf = if @lhs.mkStr 
+                     then CBind_Bind (hsnUniqifyEval @nm) @bindAspects.cTrf 
+                     else @cTrf
+
+                     
+-- Distributing the substitutions over the ast                    
+ATTR AllCodeNT [subst : {Map.Map HsName HsName} | | ]
+
+SEM CodeAGItf
+  | AGItf  module.subst = Map.empty
+  
+SEM CExpr
+  | App loc.subst   = @lhs.subst `Map.union` (genSubst @lhs.evalIn)    
+        func.subst  = @subst
+        arg.subst   = @subst
+  | Lam body.subst  = @lhs.subst `Map.union` (genSubst @lhs.evalIn)
+  | Let loc.subst   = @lhs.subst `Map.union` (genSubst @lhs.evalIn)
+        binds.subst = @subst
+        body.subst  = @subst
+  | Case loc.subst  = @lhs.subst `Map.union` (genSubst @lhs.evalIn)
+         expr.subst = @subst
+         alts.subst = @subst         
+%%]
+
+%%[(8 codegen strictana) hs
+mkStrBinds :: [HsName] -> CExpr -> CExpr
+mkStrBinds (nm:nms) body = let expr = CExpr_Var (ACoreBindRef nm Nothing) 
+                               cmetas = (CMetaBind_Plain, CMetaVal_Val)
+                           in CExpr_Let CBindCateg_Strict 
+                                        [CBind_Bind (hsnUniqifyEval nm) [CBound_Bind cmetas expr]] 
+                                        (mkStrBinds nms body) 
+mkStrBinds []       body = body
+
+applySubst :: Map.Map HsName HsName -> ACoreBindRef -> ACoreBindRef
+applySubst map bref = case Map.lookup (acbrefNm bref) map of 
+                        Just nm2 -> bref{acbrefNm = nm2}
+                        Nothing  -> bref
+
+genSubst :: [HsName] -> Map.Map HsName HsName
+genSubst (x:xs) = Map.insert x (hsnUniqifyEval x) (genSubst xs)
+genSubst []     = Map.empty                    
+%%]

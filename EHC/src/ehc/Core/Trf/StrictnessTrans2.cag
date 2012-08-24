@@ -1,0 +1,125 @@
+%%[0
+%include lhs2TeX.fmt
+%include afp.fmt
+%%]
+
+%%[doesWhat doclatex
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Strictness Transformation 2: Generating wrappers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs module {%{EH}Core.Trf.StrictnessTrans2} import({%{EH}Ty},{%{EH}Base.Common},{%{EH}Opts},{%{EH}Base.Optimize},{%{EH}Core},{%{EH}Base.Builtin})
+%%]
+
+%%[(8 codegen strictana) hs import(qualified Data.Map as Map)
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}AbstractCore},{%{EH}StrictnessDomain})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}LamInfo})
+%%]
+
+%%[(8 codegen strictana).WRAPPER ag import({Core/AbsSyn},{Core/CommonLamInfo},{Core/CommonBindNm})
+WRAPPER CodeAGItf
+%%]
+
+%%[(99 codegen strictana)
+PRAGMA strictcase
+PRAGMA nocycle
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Haskell itf
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs export(cmodTrfStrictnessTrans2)
+cmodTrfStrictnessTrans2
+  :: LamMp
+     -> CModule
+     -> ( CModule
+        , LamMp
+        )
+cmodTrfStrictnessTrans2
+     lamMp
+     cmod
+  =  let  t = wrap_CodeAGItf (sem_CodeAGItf (CodeAGItf_AGItf cmod))
+                             (Inh_CodeAGItf{ lamMp_Inh_CodeAGItf = lamMp })
+     in   ( cTrf_Syn_CodeAGItf t
+          , lamMp
+          )
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Generating wrappers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | cTrf: SELF ]
+ATTR CodeAGItf [ | | cTrf: CModule ]  
+  
+SEM CBind
+  | Bind   lhs.cTrf = if @bindAspects.isLam
+                      then let mRelInf = lamMpLookup @nm @lhs.lamMp  
+                           in case mRelInf of 
+                                Just relinf -> let wrap = genWrapper (relTy relinf) @nm
+                                                   asps = (CBound_Val acbaspKeyDefaultEvalWrapper 0 CLbl_None wrap): @bindAspects.cTrf
+                                               in CBind_Bind @nm asps
+                                                             
+                                Nothing     -> @cTrf 
+                      else @cTrf
+ 
+ 
+-- isLam determines if an expression is a lambda
+-- This is propagated through the bind aspects 
+ATTR CExpr [ | | isLam : Bool]  
+
+SEM CExpr
+  | Lam  lhs.isLam     = True
+  | * - Lam lhs.isLam  = False
+                      
+ATTR CBound CBoundL [ | | isLam USE {||} {False}: Bool]
+
+SEM CBound
+  | Bind   lhs.isLam = @expr.isLam 
+%%]
+
+%%[(8 codegen strictana) hs
+-- Helper functions for generating the wrappers
+-- Resulting wrapper: \v1 -> let! v2 = v1 in func v2
+genWrapper :: RelTy -> HsName -> CExpr
+genWrapper relty nm = let phis =  relTyToList relty
+                          n = length phis
+                          (v1,v2) = splitAt n $ take (n*2) hsnLclSupply
+                          lam = genLambda v1
+                          eval = genEval (v2, v1) phis 
+                          appl = genAppl (CExpr_Var (ACoreBindRef nm Nothing)) v2 
+                      in lam $ eval appl
+
+genLambda :: [HsName] -> CExpr -> CExpr
+genLambda (x:xs) expr = CExpr_Lam (CBind_Bind x []) (genLambda xs expr)
+genLambda []     e    = e                      
+
+-- generate let n1 = n2 in                      
+genEval :: ([HsName], [HsName]) -> [RelVal] -> CExpr -> CExpr 
+genEval ((n1:ns1), (n2:ns2)) (a:as) e = let categ = if a == RelVal_S then CBindCateg_Strict else CBindCateg_Plain
+                                            meta = (CMetaBind_Plain, CMetaVal_Val)
+                                            expr = CExpr_Var (ACoreBindRef n2 Nothing) 
+                                        in CExpr_Let categ [CBind_Bind n1 [CBound_Bind meta expr]] (genEval (ns1, ns2) as e)
+genEval _ _ e  = e
+
+genAppl :: CExpr -> [HsName] -> CExpr
+genAppl e []     = e
+genAppl e (n:ns) = let meta = (CMetaBind_Plain, CMetaVal_Val)
+                   in genAppl (CExpr_App e (CBound_Bind meta (CExpr_Var (ACoreBindRef n Nothing)))) ns
+                                        
+relTyToList :: RelTy -> [RelVal]
+relTyToList (RelTy_Func _ phi to) = phi : (relTyToList to)
+relTyToList _                     = []
+
+lamMpLookup :: HsName -> LamMp -> Maybe RelInfo
+lamMpLookup n lammp = (fmap libindaspRelInfo $ lamMpLookupAsp n acbaspKeyDefaultRelInfo lammp)
+%%]

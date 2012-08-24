@@ -1,0 +1,550 @@
+%%[0
+%include lhs2TeX.fmt
+%include afp.fmt
+%%]
+
+%%[doesWhat doclatex
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Strictness Analysis
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs module {%{EH}Core.Trf.StrictnessAnalysis} import({%{EH}Ty},{%{EH}Base.Common},{%{EH}Opts},{%{EH}Base.Optimize},{%{EH}Core},{%{EH}Base.Builtin})
+%%]
+
+%%[(8 codegen strictana) hs import(Data.Maybe, qualified Data.Map as Map, Control.Applicative)
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}AbstractCore},{%{EH}StrictnessDomain})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}Gam.DataGam})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}LamInfo})
+%%]
+
+-- debug only
+%%[(8 codegen strictana) hs import({%{EH}Base.Debug}, EH.Util.Pretty)
+%%]
+
+%%[(8 codegen strictana).WRAPPER ag import({Core/AbsSyn},{Core/CommonLamInfo}, {Core/CommonBindNm}, {Core/CommonGathLamInfo})
+WRAPPER CodeAGItf
+%%]
+
+%%[(99 codegen strictana)
+PRAGMA strictcase
+PRAGMA nocycle
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Haskell itf
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs export(cmodTrfStrictnessAnalysis)
+cmodTrfStrictnessAnalysis
+  :: EHCOpts
+     -> DataGam
+     -> LamMp
+     -> CModule
+     -> ( CModule
+        , LamMp
+        )
+cmodTrfStrictnessAnalysis
+     opts 
+     dataGam
+     lamMp
+     cmod
+  =  let  t = wrap_CodeAGItf (sem_CodeAGItf (CodeAGItf_AGItf cmod))
+                             (Inh_CodeAGItf
+                               { opts_Inh_CodeAGItf = opts
+                               , dataGam_Inh_CodeAGItf = dataGam
+                               , lamMp_Inh_CodeAGItf = lamMp
+                               })
+     in   ( cTrf_Syn_CodeAGItf t
+          , gathLamMp_Syn_CodeAGItf t
+          )
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Distributing Datagam  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen grin strictana)
+ATTR AllCodeNT CodeAGItf [ dataGam: DataGam | | ]
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Distributing options
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT CodeAGItf [ opts: EHCOpts | | ]
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Gathering LamInfo, providing hook for Core/CommonLamInfo
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+SEM CodeAGItf
+  | AGItf       loc         .	howUnionGathLamInfo
+  												=	id
+%%]
+
+%%[(8 codegen strictana)
+SEM CodeAGItf
+  | AGItf       loc         .   howMergeLamInfo	=   (\(LamInfo {laminfoBindAspMp=m}) i -> i {laminfoBindAspMp = m `Map.union` laminfoBindAspMp i})
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Newly bound LamInfo
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen grin strictana)
+SEM CBound
+  | Bind lhs.bindLamMp = let l = [ (acbaspKeyDefaultRelInfo, LamInfoBindAsp_RelInfo (RelInfo @expr.relTy RelVal_L @expr.satl  0)) ]    
+                         in  Map.singleton @lhs.nm (emptyLamInfo {laminfoBindAspMp = Map.fromList l})
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Utils: environment and domain functions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen) hs
+type RelEnv    = Map.Map HsName RelInfo
+
+localLookup :: HsName -> RelEnv -> RelInfo
+localLookup x renv = Map.findWithDefault (RelInfo RelTy_None RelVal_L  0  0) x renv
+
+-- | lookup in REnv first, then global LamMp
+relEnvLookup :: HsName -> RelEnv -> LamMp -> Maybe RelInfo
+relEnvLookup n renv lammp = Map.lookup n renv <|>  (fmap libindaspRelInfo $ lamMpLookupAsp n acbaspKeyDefaultRelInfo lammp) <|> Just (RelInfo RelTy_None RelVal_L  0  0)
+
+-- helper function
+maxInt :: Int
+maxInt = 1000
+
+prop :: Int -> Int -> RelVal -> RelVal
+prop l r phi | l > r     = RelVal_L
+             | otherwise = phi
+
+mergeEnv :: (RelVal -> RelVal -> RelVal) -> (Int -> Int -> Int) -> RelEnv -> RelEnv -> RelEnv
+mergeEnv rvalf satrf re1 re2 = let emp = RelInfo RelTy_None RelVal_L 0 0
+                                   rl1 = Map.toAscList re1
+                                   rl2 = Map.toAscList re2
+                                   app = \(RelInfo rt1 rv1 sl1 sr1) (RelInfo rt2 rv2 sl2 sr2) -> 
+                                                RelInfo rt1 (rv1 `rvalf` rv2) sl1 (sr1 `satrf` sr2) 
+                                   merge ((k1, v1):kvs1) ((k2, v2):kvs2) = 
+                                      if k1 == k2 then ((k1, app v1 v2): (merge kvs1 kvs2))
+                                                  else if k1 < k2 then (k1, app v1 emp) : (merge kvs1 ((k2, v2):kvs2))  
+                                                                  else (k2, app v2 emp) : (merge ((k1, v1):kvs1) kvs2)
+                                   merge [] ((k2, v2):kvs2) = (k2, app v2 emp) : (merge [] kvs2)
+                                   merge ((k1, v1):kvs1) [] = (k1, app v1 emp) : (merge kvs1 [])
+                                   merge [] [] = []
+                               in Map.fromList $ merge rl1 rl2
+
+envJoin :: RelEnv -> RelEnv -> RelEnv  
+envJoin = mergeEnv valJoin min
+
+envMeet :: RelEnv -> RelEnv -> RelEnv  
+envMeet = mergeEnv valMeet max
+
+valJoin :: RelVal -> RelVal -> RelVal
+valJoin RelVal_S rval = rval
+valJoin RelVal_L _    = RelVal_L
+
+valMeet :: RelVal -> RelVal -> RelVal
+valMeet RelVal_S _    = RelVal_S
+valMeet RelVal_L rval = rval                  
+                  
+-- Datagam lookup for strictness of a tag                
+getTupStrict :: CTag -> DataGam -> [Bool]
+getTupStrict ct dg = case dataGamTagLookup ct dg of
+                       Just (dgi,dti) -> map (\x -> dcfaiStrictness x == Strictness_Strict) $ dtiConFldAnnL dti
+                       Nothing        -> [] --error "Lookup on Datagam with CTag failed"
+
+-- Lookup of the number of arguments of a tag                       
+getTupArgs :: CTag -> DataGam -> Int
+getTupArgs ct dg = case dataGamTagLookup ct dg of
+                     Just (dgi,dti) -> length $ dtiConFldAnnL dti                       
+                     Nothing        -> 0 --error "Lookup on Datagam with CTag failed"
+
+-- create a relevance type from a list of booleans (are used to determine if it is S or L)                     
+createRelTy :: [Bool] -> RelTy
+createRelTy []         = RelTy_Unit 
+createRelTy (True :bs) = RelTy_Func RelTy_Unit RelVal_S (createRelTy bs)
+createRelTy (False:bs) = RelTy_Func RelTy_Unit RelVal_L (createRelTy bs)
+
+joinRelTy :: RelTy -> RelTy -> RelTy
+joinRelTy RelTy_None                x                         = x
+joinRelTy x                         RelTy_None                = x
+joinRelTy (RelTy_Func fr1 phi1 to1) (RelTy_Func fr2 phi2 to2) = RelTy_Func (joinRelTy fr1 fr2) (phi1 `valJoin` phi2) (joinRelTy to1 to2) 
+joinRelTy x@(RelTy_Func _ _ _)      y                         = x
+joinRelTy y                         x@(RelTy_Func _ _ _)      = x
+joinRelTy RelTy_Unit                RelTy_Unit                = RelTy_Unit 
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Type environment input
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ envIn : RelEnv | | ]
+
+SEM CodeAGItf
+  | AGItf loc.envIn = Map.empty
+
+SEM CExpr
+  | App func.envIn  = @lhs.envIn
+        arg.envIn   = @lhs.envIn
+  | Lam body.envIn  = @lhs.envIn 
+  | Case expr.envIn = @lhs.envIn
+         alts.envIn = @expr.envOut
+         alts.caseTy = @expr.relTy
+  | Let binds.envIn = if @categ == CBindCateg_Rec 
+                      then Map.union @lhs.envIn @binds.gathRecEnv -- Here the recursion can be implemented 
+                      else @lhs.envIn
+        body.envIn  = Map.union @binds.gathEnv @lhs.envIn
+ 
+ATTR AllBind  [ | | gathEnv    USE {`Map.union`} {Map.empty}: RelEnv ]
+ATTR AllBind  [ | | gathRecEnv USE {`Map.union`} {Map.empty}: RelEnv ] 
+ 
+SEM CBound
+  | Bind loc.gathEnv    = Map.singleton @lhs.nm (RelInfo @expr.relTy RelVal_L @expr.satl  0)
+            .gathRecEnv = Map.singleton @lhs.nm (RelInfo RelTy_None  RelVal_L 0           0)
+ 
+SEM CAlt
+  | Alt  expr.envIn = Map.union @lhs.envIn @pat.getVarTys            
+
+ATTR CAlt CAltL CPat [caseTy : RelTy | | ]  
+  
+ATTR CPat [ | | getVarTys : RelEnv]
+ 
+SEM CPat
+  | Var  lhs.getVarTys = Map.singleton @pnm (RelInfo @lhs.caseTy RelVal_L 0 0)
+  | Con  lhs.getVarTys = Map.fromList $ map (\x -> (x, RelInfo RelTy_Unit RelVal_L 0 0)) @binds.fldNmL
+  | Int  lhs.getVarTys = Map.empty
+  | Char lhs.getVarTys = Map.empty
+  | BoolExpr lhs.getVarTys = Map.empty  
+
+{-  
+ATTR CPatFld [ | | fldNm : {HsName} ]
+
+SEM CPatFld
+  | Fld lhs.fldNm = @fldNm
+
+ATTR CPatFldL [ | | fldNmL : {[HsName]} ]  
+
+SEM CPatFldL
+  | Cons lhs.fldNmL = @hd.fldNm : @tl.fldNmL
+  | Nil  lhs.fldNmL = []
+  
+--ATTR CBound CBoundL [ nm : HsName || ]
+
+--SEM CBind 
+--  | Bind bindAspects.nm = @nm          
+-}
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%                           
+%%% Relevance of the input
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ relIn : RelVal | | ]
+
+SEM CodeAGItf
+  | AGItf       module.relIn = RelVal_S
+
+SEM CExpr  
+  | App         func.relIn = @lhs.relIn
+                arg.relIn  = case @func.relTy of
+                               RelTy_Func _ p _ -> prop @func.satl (@lhs.satr + 1) p                
+                               _                -> RelVal_L
+  | Lam         body .relIn = RelVal_S
+  | Let         binds.relIn = RelVal_S
+                body .relIn = @lhs.relIn
+  | Case        expr .relIn = @lhs.relIn
+                alts .relIn = RelVal_S               
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% The number of arguments that are supplied to an expression (satr)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ satr : Int | | ]
+
+SEM CodeAGItf
+  | AGItf   module. satr = 0
+
+SEM CModule
+  | Mod     expr.satr    = @lhs.satr
+  
+SEM CExpr
+  | App     func.satr    = @lhs.satr + 1
+            arg.satr     = 0   
+  | Lam     body.satr    = maxInt
+  | Let     binds.satr   = maxInt
+            body.satr    = @lhs.satr
+  | Case    expr.satr    = 0 
+            alts.satr    = maxInt
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% The resulting type environment
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [|| envOut USE {`envMeet`} {Map.empty} : RelEnv ]
+
+SEM CExpr
+  | Int Char lhs.envOut =  @lhs.envIn
+  | Var      lhs.envOut =  let mres = relEnvLookup (acbrefNm @ref) @lhs.envIn @lhs.lamMp
+                           in case mres of 
+                                Just x  -> Map.adjust 
+                                           (\(RelInfo relty rval sl sr) -> RelInfo relty (@lhs.relIn `valMeet` rval) sl (max @lhs.satr sr))  (acbrefNm @ref) @lhs.envIn
+                                Nothing -> Map.insert (acbrefNm @ref) (RelInfo RelTy_None @lhs.relIn 0 @lhs.satr ) @lhs.envIn
+  | App      lhs.envOut  = @func.envOut `envMeet` @arg.envOut
+  | Lam      loc.envOut  = if prop (@body.satl + 1) @lhs.satr @lhs.relIn == RelVal_S 
+                           then Map.delete @bind.nm @body.envOut 
+                           else @lhs.envIn  -- contain environment
+             lhs.envOut  = @loc.envOut
+  | Let      loc.relEnvs = catMaybes $ zipWith3  
+                                       (\ nm satl env -> case Map.lookup nm @body.envOut of
+                                                           (Just (RelInfo _ RelVal_S _ sr)) | satl <= sr -> Just env
+                                                           _                                             -> Nothing) 
+                                       @binds.nmL @binds.satlL @binds.envOutL
+             loc.envOut = foldr envMeet @body.envOut @relEnvs
+             lhs.envOut = foldr (\x map -> Map.delete x map) @loc.envOut @binds.nmL
+  | Case     lhs.envOut = if prop @alts.satl @lhs.satr @lhs.relIn == RelVal_S 
+                          then @alts.envOut
+                          else @expr.envOut -- contain environments of alts
+  | FFI      lhs.envOut = @lhs.envIn
+  | Tup      lhs.envOut = @lhs.envIn
+
+ATTR CBindL [ || envOutL : {[RelEnv]} ]
+              
+SEM CBindL 
+  | Cons       lhs.envOutL = (@hd.envOut : @tl.envOutL)
+  | Nil        lhs.envOutL = [] 
+  
+--ATTR CBind [ | | nm : {HsName}]
+
+SEM CBind 
+  | Bind   lhs.envOut = @bindAspects.envOut
+           lhs.satl   = @bindAspects.satl
+--           lhs.nm     = @nm
+
+SEM CBound
+  | Bind      lhs.envOut = @expr.envOut 
+              lhs.satl   = @expr.satl  
+
+ATTR CAltL [ || isNil : Bool] 
+ 
+SEM CAltL
+  | Cons lhs.envOut = if @tl.isNil then @hd.envOut else @hd.envOut `envJoin` @tl.envOut
+         lhs.isNil  = False
+  | Nil  lhs.envOut = Map.empty
+         lhs.isNil  = True
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% The number of needed argument (satl)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllExprOnly AllBind AllAlt [ | | satl USE {`max`} {0} : Int ]
+
+SEM CExpr
+  | Int Char   lhs.satl = 0
+  | Var        lhs.satl = let mres = relEnvLookup (acbrefNm @ref) @lhs.envIn @lhs.lamMp
+                          in case mres of 
+                               Just res -> satl res
+                               Nothing  -> 0 
+  | App        lhs.satl = @func.satl - 1
+  | Lam        lhs.satl = @body.satl + 1
+  | Let        lhs.satl = @body.satl 
+  | Case       lhs.satl = @alts.satl
+  | FFI        lhs.satl = 0
+  | Tup        lhs.satl = getTupArgs @tag @lhs.dataGam 
+  
+SEM CAltL
+  | Cons       lhs.satl = max @hd.satl @tl.satl
+  | Nil        lhs.satl = 0
+  
+SEM CAlt   
+  | Alt        lhs.satl = @expr.satl
+
+ATTR CBindL [ | | satlL USE {++} {[]} : {[Int]}]
+
+SEM CBindL
+  | Cons   lhs.satlL = @hd.satl : @tl.satlL
+  | Nil    lhs.satlL = []  
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% The derived relevance type
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | relTy USE {`joinRelTy`} {RelTy_None} : RelTy  ]
+
+SEM CExpr
+  | Int Char   lhs.relTy = RelTy_Unit
+  | Var        lhs.relTy = maybe RelTy_Unit relTy (relEnvLookup (acbrefNm @ref) @lhs.envIn @lhs.lamMp)
+  | App        lhs.relTy = case @func.relTy of 
+                             RelTy_Func _ _ to -> to 
+                             _                 -> RelTy_Unit                     
+  | Lam        lhs.relTy = let (relty,relval) = maybe (RelTy_Unit, RelVal_L) (\(RelInfo a b _ _) -> (a,b)) (Map.lookup @bind.nm @body.envOut) 
+                           in RelTy_Func relty relval @body.relTy
+  | Let        lhs.relTy = @body.relTy
+  | Case       lhs.relTy = @alts.relTy
+  | FFI        lhs.relTy = RelTy_Unit
+  | Tup        lhs.relTy = createRelTy $ getTupStrict @tag @lhs.dataGam
+
+SEM CAltL
+  | Cons       lhs.relTy = @hd.relTy `joinRelTy` @tl.relTy 
+  | Nil        lhs.relTy = RelTy_None
+  
+SEM CAlt   
+  | Alt        lhs.relTy = @expr.relTy
+%%]
+
+
+%%[(8 codegen strictana) hs
+-- determines if there is a change in relevance for a certain variable
+-- In- and output environments are compared to determine which variables are made
+-- strict in a certain environment.
+-- L in first environment, S in second environment
+tyEnvDiff :: RelEnv -> RelEnv -> [HsName]
+tyEnvDiff relIn relOut = let listIn = Map.toList relIn
+                         in map fst $ filter (\(nm,(RelInfo _ relval satl _)) -> 
+                                                 relval == RelVal_L && satl == 0 &&
+                                                 (relVal $ localLookup nm relOut) == RelVal_S
+                                             )
+                                      listIn
+
+-- Functions only for debugging                               
+showRelEnv :: RelEnv -> String
+showRelEnv gam = Map.showTree gam
+
+printFuncStrictness :: RelTy -> String
+printFuncStrictness (RelTy_Func from ann to) = (printFuncStrictness from) 
+                                            ++ " -" 
+                                            ++ (showRelVal ann) 
+                                            ++ "-> " 
+                                            ++ (printFuncStrictness to)
+printFuncStrictness _                        = "t"
+
+showRelVal RelVal_S = "S"
+showRelVal RelVal_L = "L"               
+               
+getFuncStrictness :: RelTy -> String
+getFuncStrictness (RelTy_Func _ RelVal_S _) = "S"
+getFuncStrictness _ = "L"
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Transformed module
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | cTrf: SELF ]
+ATTR CodeAGItf [ | | cTrf: CModule ]
+
+-- Collecting debug information
+SEM CExpr
+  | Lam        loc.deb = let s = showRelEnv @body.envOut
+                         in CExpr_Ann (CExprAnn_Debug s) @cTrf
+  | App        loc.deb = let s = printFuncStrictness @func.relTy 
+                         in CExpr_Ann (CExprAnn_Debug s) @cTrf  
+  | Let        loc.deb  = let s = "Ty: " ++ (concatMap (\(x,y) -> show x ++ "::" ++ (printFuncStrictness $ relTy $ fromJust y)) $ filter (\(x,y) -> isJust y) $ map (\x -> (x, Map.lookup x @loc.envOut)) @binds.nmL) 
+                          in CExpr_Ann (CExprAnn_Debug (s{-show @loc.discrLL-})) @cTrf   
+  | Case       loc.deb  = CExpr_Ann (CExprAnn_Debug "Case") @cTrf
+
+-- Replace every expr with an annotated expression with debug information and evaluation lists 
+SEM CExpr
+  | Let     lhs.cTrf = if null @loc.evalL then @loc.deb else CExpr_Ann (CExprAnn_Eval @loc.evalL) @loc.deb  
+  | * - Let lhs.cTrf = if null @loc.evalL then @cTrf else CExpr_Ann (CExprAnn_Eval @loc.evalL) @cTrf 
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Evaluation lists
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+SEM CExpr
+  | Var  loc.evalL = if (acbrefNm @ref) `elem` @lhs.discrL then [acbrefNm @ref] else [] 
+  | App  loc.evalL = if @func.satl < 2 then @lhs.discrL else []
+  | Lam  loc.evalL = []
+  | Let  loc.evalL = if @body.satl == 0 then @lhs.discrL else []
+  | Case loc.evalL = if @alts.satl == 0 then @lhs.discrL else []
+  | * - Var App Lam Let Case loc.evalL = []
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Discrepancy lists
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ discrL : {[HsName]} | | ]
+
+SEM CodeAGItf
+  | AGItf loc.discrL   = []
+
+SEM CExpr
+  | Lam  body.discrL   = @lhs.discrL ++ (tyEnvDiff @loc.envOut @body.envOut)
+  | App  loc.isSat     = @func.satl < 2 
+         func.discrL   = if @isSat
+                         then filter (\x -> let relIn = localLookup x @func.envOut
+                                            in relVal relIn == RelVal_S) @lhs.discrL
+                         else []
+         arg.discrL    = if @isSat
+                         then filter (\x -> let relIn = localLookup x @arg.envOut
+                                            in relVal relIn == RelVal_S) @lhs.discrL
+                         else []
+  | Let  body.discrL   = if @body.satl < 1 
+                         then []
+                         else @lhs.discrL
+         loc.bodyVals  = map (\x -> localLookup x @binds.envOut) @binds.nmL
+         loc.discrLL   = zipWith (\x y -> if relVal x == RelVal_S && satr x > satl x && @body.satl < 1
+                                          then [] 
+                                          else tyEnvDiff @loc.envOut y)
+                                 @bodyVals @binds.envOutL
+         binds.discrLL = @loc.discrLL
+  | Case loc.discrLL   = map (\x -> tyEnvDiff @alts.envOut x) @alts.altEnvs 
+         alts.discrLL  = if @alts.satl == 0
+                         then @loc.discrLL
+                         else map (\x -> x ++ @lhs.discrL) @loc.discrLL 
+         
+ATTR CBindL [ | | nmL : {[HsName]}]                          
+
+SEM CBindL
+  | Cons    lhs.nmL = @hd.nm : @tl.nmL
+  | Nil     lhs.nmL = []
+
+ATTR CAltL [|| altEnvs : {[RelEnv]}]
+
+SEM CAltL
+  | Cons lhs.altEnvs = @hd.envOut : @tl.altEnvs
+  | Nil  lhs.altEnvs = []          
+         
+-- Distributing discrepancy lists into the let bindings and case arms                         
+ATTR CAltL CBindL [ discrLL : {[[HsName]]} | | ]
+
+SEM CBindL
+  | Cons  tl.discrLL = if null @lhs.discrLL then [] else tail @lhs.discrLL
+          hd.discrL  = if null @lhs.discrLL then [] else head @lhs.discrLL
+ 
+SEM CAltL          
+  | Cons  tl.discrLL = if null @lhs.discrLL then [] else tail @lhs.discrLL
+          hd.discrL  = if null @lhs.discrLL then [] else head @lhs.discrLL
+
+SEM CAlt
+  | Alt  pat.discrL  = []
+         expr.discrL = @lhs.discrL         
+%%]

@@ -424,6 +424,9 @@ SEM CExprAnn
   | Ty          loc         .   pp          =   "::" >#< ppTyWithCfg' CfgPP_Plain @ty
   | Coe         loc         .   pp          =   "~" >#< ppRelevCoe @lhs.varPPMp @coe
   | Debug       loc         .   pp          =   ppCmt $ pp @info
+%%[[strictana
+  | Eval        loc         .   pp          =   pp "eval" >#< (hlist $ map pp @eval)
+%%]]
 
 SEM CBindAnn
   | Coe         loc         .   pp          =   "~" >#< ppRelevCoe @lhs.varPPMp @coe

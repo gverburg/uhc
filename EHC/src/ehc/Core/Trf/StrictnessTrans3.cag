@@ -1,0 +1,144 @@
+%%[0
+%include lhs2TeX.fmt
+%include afp.fmt
+%%]
+
+%%[doesWhat doclatex
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Strictness Transformation 3: Adding calls to wrappers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs module {%{EH}Core.Trf.StrictnessTrans3} import({%{EH}Ty},{%{EH}Base.Common},{%{EH}Opts},{%{EH}Base.Optimize},{%{EH}Core},{%{EH}Base.Builtin})
+%%]
+
+%%[(8 codegen strictana) hs import(qualified Data.Map as Map)
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}AbstractCore},{%{EH}StrictnessDomain})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}LamInfo})
+%%]
+
+%%[(8 codegen strictana).WRAPPER ag import({Core/AbsSyn},{Core/CommonLamInfo}, {Core/CommonBindNm})
+WRAPPER CodeAGItf
+%%]
+
+%%[(99 codegen strictana)
+PRAGMA strictcase
+PRAGMA nocycle
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Haskell itf
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs export(cmodTrfStrictnessTrans3)
+cmodTrfStrictnessTrans3
+  :: LamMp
+     -> CModule
+     -> ( CModule
+        , LamMp
+        )
+cmodTrfStrictnessTrans3 
+     lamMp
+     cmod
+  =  let  t = wrap_CodeAGItf (sem_CodeAGItf (CodeAGItf_AGItf cmod))
+                             (Inh_CodeAGItf{ lamMp_Inh_CodeAGItf = lamMp })
+     in   ( cTrf_Syn_CodeAGItf t
+          , lamMp
+          )
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Adding calls to wrappers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | cTrf: SELF ]
+ATTR CodeAGItf [ | | cTrf: CModule ]
+
+SEM CExpr 
+  | Var  lhs.cTrf = if @lhs.toWrap && (acbrefNm @ref) `elem` @lhs.wrapNmL
+                    then CExpr_Var (ACoreBindRef (acbrefNm @ref) (Just acbaspKeyDefaultEvalWrapper))
+                    else @cTrf
+                    
+-- Collecting the names of the wrappers                    
+ATTR AllCodeNT [wrapNmL : {[HsName]} | | ]
+
+SEM CodeAGItf
+  | AGItf    module.wrapNmL = []
+
+SEM CExpr
+  | Let    body.wrapNmL = @binds.getWraps
+
+-- Getting the wrapper names from the bindings  
+ATTR CBind CBindL [ | | getWraps USE {++} {[]}: {[HsName]}]
+
+SEM CBind
+  | Bind  lhs.getWraps = if @bindAspects.hasWrap
+                         then [@nm]
+                         else []
+                         
+SEM CBindL
+  | Cons lhs.getWraps = @hd.getWraps ++ @tl.getWraps
+  | Nil  lhs.getWraps = []
+  
+  
+-- Determines if the list bindaspects contains a wrapper  
+ATTR CBoundL [ | | hasWrap USE {||} {False} : Bool]
+  
+ATTR CBound [ | | hasWrap : Bool]
+
+SEM CBound 
+  | Val   lhs.hasWrap = @aspectKeyS == acbaspKeyDefaultEvalWrapper 
+  | *-Val lhs.hasWrap = False
+   
+-- toWrap determines if variables in an expression should be transformed 
+-- into calls to the wrappers
+ATTR AllCodeNT [toWrap : Bool | | ]
+
+SEM CodeAGItf
+  | AGItf  module.toWrap  = False
+  
+SEM CExpr
+  | Lam  body.toWrap = @lhs.toWrap
+  | App  func.toWrap = @lhs.toWrap
+         arg.toWrap  = True
+  | Let  body.toWrap = @lhs.toWrap
+        binds.toWrap = @lhs.toWrap
+  | Case alts.toWrap = @lhs.toWrap 
+
+SEM CBound 
+  | Val  expr.toWrap = False  
+  
+SEM CBind
+  | Bind  bindAspects.toWrap = if @bindAspects.isLam
+                               then False  
+                               else let mRelInf = lamMpLookup @nm @lhs.lamMp
+                                    in case mRelInf of 
+                                         Just relInf -> (satl relInf) > 0 
+                                         Nothing     -> True
+
+                                         
+-- isLam determines if an expression is a lambda
+-- This is propagated through the bind aspects                                         
+ATTR CExpr [ | | isLam : Bool]  
+
+SEM CExpr
+  | Lam     lhs.isLam = True
+  | * - Lam lhs.isLam = False
+                      
+ATTR CBound CBoundL [ | | isLam USE {||} {False}: Bool]
+
+SEM CBound
+  | Bind lhs.isLam   = @expr.isLam 
+%%]
+
+%%[(8 codegen strictana) hs
+lamMpLookup :: HsName -> LamMp -> Maybe RelInfo
+lamMpLookup n lammp = (fmap libindaspRelInfo $ lamMpLookupAsp n acbaspKeyDefaultRelInfo lammp)
+%%]

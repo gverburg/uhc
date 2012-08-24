@@ -208,6 +208,9 @@ DATA CExprAnn
   | Ty			ty				: {Ty}
   | Coe			coe				: {RelevCoe}
   | Debug		info			: {String}
+%%[[ strictana
+  | Eval        eval            : {[HsName]}
+%%]]
 
 -- | ann for name intro
 DATA CBindAnn

@@ -371,6 +371,10 @@ data ACoreBindAspectKey
 %%[[93
   | ACoreBindAspectKey_FusionRole           -- fusion role
 %%]]
+%%[[strictana
+  | ACoreBindAspectKey_RelInfo              -- information for relevance typing
+  | ACoreBindAspectKey_EvalWrapper          -- wrapper for evaluation
+%%]]
   deriving (Eq,Ord)
 
 instance Show ACoreBindAspectKey where
@@ -385,6 +389,10 @@ instance Show ACoreBindAspectKey where
 %%]]
 %%[[93
   show ACoreBindAspectKey_FusionRole    = "fusionrole"
+%%]]
+%%[[strictana
+  show ACoreBindAspectKey_RelInfo       = "relinfo"
+  show ACoreBindAspectKey_EvalWrapper   = "wrapper"
 %%]]
 
 instance PP ACoreBindAspectKey where
@@ -472,6 +480,20 @@ acbaspkeyDefaultSysfTy ml =
 acbaspkeyFusionRole :: ACoreBindAspectKeyS
 acbaspkeyFusionRole = acbaspkeyMk
   [ ACoreBindAspectKey_FusionRole ]
+%%]
+
+%%[(8 codegen strictana) hs export(acbaspKeyDefaultRelInfo)
+-- | predefined:
+acbaspKeyDefaultRelInfo :: ACoreBindAspectKeyS
+acbaspKeyDefaultRelInfo = acbaspkeyMk
+  [ ACoreBindAspectKey_Default, ACoreBindAspectKey_RelInfo ]  
+%%]
+
+%%[(8 codegen strictana) hs export(acbaspKeyDefaultEvalWrapper)
+-- | predefined:
+acbaspKeyDefaultEvalWrapper :: ACoreBindAspectKeyS
+acbaspKeyDefaultEvalWrapper = acbaspkeyMk
+  [ ACoreBindAspectKey_Default, ACoreBindAspectKey_EvalWrapper ]
 %%]
 
 %%[(8 codegen) hs export(ppACBaspKeyS)

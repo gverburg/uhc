@@ -7,7 +7,7 @@
 ###########################################################################################
 
 EHC_ASPECTS								:= $(strip $(if $(ASPECTS),$(ASPECTS) \
-											,base hmtyinfer codegen grin  \
+											,base hmtyinfer codegen grin strictana \
 											 $(if $(EHC_CFG_USE_RULER),,noHmTyRuler) \
 											 $(if $(ENABLE_JAVA),java jazy,) \
 											 $(if $(ENABLE_LLVM),llvm,) \

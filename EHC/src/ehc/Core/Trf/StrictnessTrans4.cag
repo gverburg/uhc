@@ -1,0 +1,184 @@
+%%[0
+%include lhs2TeX.fmt
+%include afp.fmt
+%%]
+
+%%[doesWhat doclatex
+
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Strictness Transformation 4: Removing unnecessary strict let bindings
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs module {%{EH}Core.Trf.StrictnessTrans4} import({%{EH}Ty},{%{EH}Base.Common},{%{EH}Opts},{%{EH}Base.Optimize},{%{EH}Core},{%{EH}Base.Builtin})
+%%]
+
+%%[(8 codegen strictana) hs import(qualified Data.Map as Map, Data.Maybe)
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}AbstractCore},{%{EH}StrictnessDomain})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}Gam.DataGam})
+%%]
+
+%%[(8 codegen strictana) hs import({%{EH}LamInfo})
+%%]
+
+%%[(8 codegen strictana).WRAPPER ag import({Core/AbsSyn},{Core/CommonLamInfo}, {Core/CommonBindNm})
+WRAPPER CodeAGItf
+%%]
+
+%%[(99 codegen strictana)
+PRAGMA strictcase
+PRAGMA nocycle
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Haskell itf
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana) hs export(cmodTrfStrictnessTrans4)
+cmodTrfStrictnessTrans4
+  :: DataGam
+     -> LamMp
+     -> CModule
+     -> ( CModule
+        , LamMp
+        )
+cmodTrfStrictnessTrans4 
+     dataGam
+     lamMp
+     cmod
+  =  let  t = wrap_CodeAGItf (sem_CodeAGItf (CodeAGItf_AGItf cmod))
+                             (Inh_CodeAGItf
+                               { dataGam_Inh_CodeAGItf = dataGam
+                               , lamMp_Inh_CodeAGItf = lamMp
+                               })
+     in   ( cTrf_Syn_CodeAGItf t
+          , lamMp
+          )
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Distributing Datagam  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen grin strictana)
+ATTR AllCodeNT CodeAGItf [ dataGam: DataGam | | ]
+%%]
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%% Removing unnecessary let!'s
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%[(8 codegen strictana)
+ATTR AllCodeNT [ | | cTrf: SELF ]
+ATTR CodeAGItf [ | | cTrf: CModule ]  
+ 
+-- Actual transforming of a strict let binding into a plain let binding
+-- Only done when the rhs of the binding is a variable which is in eval  
+SEM CExpr
+  | Let    lhs.cTrf = if @categ == CBindCateg_Strict  && not (null @binds.getVar)
+                      then if (head @binds.getVar) `elem` @lhs.eval
+                           then CExpr_Let CBindCateg_Plain @binds.cTrf @body.cTrf
+                           else @cTrf
+                      else @cTrf
+
+-- Helper attributes to determine if a rhs of a binding is a variable                      
+ATTR CExpr CBind CBound [ | | getVar : {[HsName]}]
+
+SEM CExpr 
+  | Var   lhs.getVar = [acbrefNm @ref]
+  | *-Var lhs.getVar = []   
+
+SEM CBind
+  | Bind  lhs.getVar = @bindAspects.getVar  
+  
+SEM CBound 
+  | Bind   lhs.getVar = @expr.getVar
+  | *-Bind lhs.getVar = []   
+  
+ATTR CBindL  CBoundL [ | | getVar USE {++} {[]} : {[HsName]}]
+  
+                                         
+-- Collecting the list of evaluated variables
+ATTR AllCodeNT [ eval : {[HsName]} | | ]
+SEM CodeAGItf
+  | AGItf  module.eval = []
+  
+-- Add strict arguments from lambdas
+SEM CExpr
+  | Lam    body.eval = case @lhs.relTy of 
+                         (RelTy_Func _ phi _) -> if phi == RelVal_S 
+                                                 then @argNm : @lhs.eval
+                                                 else @lhs.eval
+                         _                    -> @lhs.eval
+
+-- Putting the relevance types in place for the lambdas                         
+ATTR AllCodeNT [ relTy : RelTy | | ]
+SEM CodeAGItf
+  | AGItf  module.relTy = RelTy_Unit
+
+SEM CBind
+  | Bind  bindAspects.relTy = let mRelInfo = lamMpLookup @nm @lhs.lamMp
+                              in case mRelInfo of
+                                   Just relInfo -> relTy relInfo
+                                   Nothing      -> RelTy_Unit
+
+SEM CBound
+  | Bind  expr.relTy = @lhs.relTy  
+  | Val   expr.relTy = RelTy_Unit
+  
+SEM CExpr
+  | Let   body.relTy = @lhs.relTy
+  | Lam   body.relTy = case @lhs.relTy of
+                         (RelTy_Func _ _ to) -> to
+                         _                   -> RelTy_Unit
+  | App   func.relTy = RelTy_Unit
+          arg.relTy  = RelTy_Unit  
+  | Case  alts.relTy = @lhs.relTy
+
+                                              
+-- Add bound variables from strict let expressions to eval  
+SEM CExpr
+  | Let body.eval = if @categ == CBindCateg_Strict 
+                    then @binds.bindNmL ++ @lhs.eval
+                    else @lhs.eval
+
+ATTR CBind [ || bindNm : {HsName}]
+
+SEM CBind
+  | Bind  lhs.bindNm = @nm
+
+ATTR CBindL [ || bindNmL : {[HsName]}]
+
+SEM CBindL
+  | Cons  lhs.bindNmL = @hd.bindNm : @tl.bindNmL
+  | Nil   lhs.bindNmL = []                    
+   
+   
+-- Add strict variables from patterns.
+SEM CAlt 
+  | Alt expr.eval = @pat.eval ++ @lhs.eval
+
+ATTR CPat [ | | eval : {[HsName]}]  
+SEM CPat
+  | Var lhs.eval  = [@pnm]  
+  | Con lhs.eval  = let tagInfo = getTupStrict @tag @lhs.dataGam
+                    in catMaybes $ zipWith (\b f -> if b then Just f else Nothing) tagInfo @binds.fldNmL 
+  | Int lhs.eval  = [] 
+  | Char lhs.eval = []   
+%%]
+
+%%[(8 codegen strictana) hs
+-- Datagam lookup for strictness of a tag                
+getTupStrict :: CTag -> DataGam -> [Bool]
+getTupStrict ct dg = case dataGamTagLookup ct dg of
+                       Just (dgi,dti) -> map (\x -> dcfaiStrictness x == Strictness_Strict) $ dtiConFldAnnL dti
+                       Nothing        -> [] --error "Lookup on Datagam with CTag failed"                       
+
+lamMpLookup :: HsName -> LamMp -> Maybe RelInfo
+lamMpLookup n lammp = (fmap libindaspRelInfo $ lamMpLookupAsp n acbaspKeyDefaultRelInfo lammp)
+%%]

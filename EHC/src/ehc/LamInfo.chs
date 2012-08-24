@@ -44,6 +44,8 @@ Currently the following is maintained:
 %%]
 %%[(8 codegen) import(EH.Util.Utils)
 %%]
+%%[(8 codegen strictana) import ({%{EH}StrictnessDomain})
+%%]
 
 -- PP
 %%[(8 codegen) import(EH.Util.Pretty,{%{EH}AnaDomain.Pretty},{%{EH}Ty.Pretty})
@@ -114,6 +116,11 @@ data LamInfoBindAsp
       { libindaspFusionRole 	:: !FusionRole
       }
 %%]]
+%%[[ strictana
+  | LamInfoBindAsp_RelInfo
+      { libindaspRelInfo        :: !RelInfo           -- new relevance info
+      }
+%%]]
   deriving ( Show
 %%[[50
            , Data, Typeable
@@ -130,6 +137,9 @@ instance PP LamInfoBindAsp where
   pp (LamInfoBindAsp_Core    ml	c) = pp "Core" -- >#< pp c -- Core.Pretty uses LamInfo, so module cycle...
 %%[[93
   pp (LamInfoBindAsp_FusionRole	r) = "Fuse" >#< pp r
+%%]]
+%%[[ strictana
+  pp (LamInfoBindAsp_RelInfo    i) = "RInfo" >#< pp i
 %%]]
 %%]
 
@@ -342,6 +352,9 @@ instance Serialize LamInfoBindAsp where
 %%[[(8888 coresysf)
   sput (LamInfoBindAsp_SysfTy   	a) = sputWord8 4 >> sput a
 %%]]
+%%[[ strictana
+  sput (LamInfoBindAsp_RelInfo      a) = sputWord8 5 >> sput a
+%%]]
   sget = do
     t <- sgetWord8
     case t of
@@ -353,6 +366,9 @@ instance Serialize LamInfoBindAsp where
 %%]]
 %%[[(8888 coresysf)
       4 -> liftM  LamInfoBindAsp_SysfTy		sget
+%%]]
+%%[[ strictana
+      5 -> liftM  LamInfoBindAsp_RelInfo    sget    
 %%]]
 
 instance Serialize LamInfo where
