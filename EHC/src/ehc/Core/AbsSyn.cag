@@ -208,7 +208,7 @@ DATA CExprAnn
   | Ty			ty				: {Ty}
   | Coe			coe				: {RelevCoe}
   | Debug		info			: {String}
-%%[[ strictana
+%%[[ (8 codegen strictana)
   | Eval        eval            : {[HsName]}
 %%]]
 

@@ -819,7 +819,7 @@ instance Serialize CExprAnn where
   sput (CExprAnn_Ty    a) = sputWord8 0 >> sput a
   sput (CExprAnn_Coe   a) = sputWord8 1 >> sput a
   sput (CExprAnn_Debug _) = sputWord8 2
-%%[[ strictana
+%%[[ (8 codegen strictana)
   sput (CExprAnn_Eval  a) = sputWord8 3 >> sput a
 %%]]
   sget
@@ -828,7 +828,7 @@ instance Serialize CExprAnn where
             0 -> liftM  CExprAnn_Ty         sget            
             1 -> liftM  CExprAnn_Coe        sget            
             2 -> return (CExprAnn_Debug     "")
-%%[[ strictana
+%%[[ (8 codegen strictana)
             3 -> liftM  CExprAnn_Eval       sget
 %%]]
 

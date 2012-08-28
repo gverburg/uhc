@@ -74,6 +74,7 @@ SEM CExpr
   | Lam lhs.cTrf  = if null @lhs.evalIn
                     then @cTrf
                     else mkStrBinds @lhs.evalIn @cTrf
+        bind.mkStr = False
   | Let (binds.mkStr, lhs.cTrf) = 
                     if @categ == CBindCateg_Plain && ((head @binds.bindNmL) `elem` @lhs.evalIn)
                     then (True, mkStrBinds (delete (head @binds.bindNmL) @lhs.evalIn) (CExpr_Let CBindCateg_Strict @binds.cTrf @body.cTrf))

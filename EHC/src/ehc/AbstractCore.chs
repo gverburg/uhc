@@ -371,7 +371,7 @@ data ACoreBindAspectKey
 %%[[93
   | ACoreBindAspectKey_FusionRole           -- fusion role
 %%]]
-%%[[strictana
+%%[[(8 codegen strictana)
   | ACoreBindAspectKey_RelInfo              -- information for relevance typing
   | ACoreBindAspectKey_EvalWrapper          -- wrapper for evaluation
 %%]]
@@ -390,7 +390,7 @@ instance Show ACoreBindAspectKey where
 %%[[93
   show ACoreBindAspectKey_FusionRole    = "fusionrole"
 %%]]
-%%[[strictana
+%%[[(8 codegen strictana)
   show ACoreBindAspectKey_RelInfo       = "relinfo"
   show ACoreBindAspectKey_EvalWrapper   = "wrapper"
 %%]]
@@ -1536,6 +1536,10 @@ instance Serialize ACoreBindAspectKey where
 %%[[93
   sput (ACoreBindAspectKey_FusionRole    ) = sputWord8 7
 %%]]
+%%[[(8 codegen strictana)
+  sput (ACoreBindAspectKey_RelInfo       ) = sputWord8 8
+  sput (ACoreBindAspectKey_EvalWrapper   ) = sputWord8 9
+%%]]
   sget = do
     t <- sgetWord8
     case t of
@@ -1550,6 +1554,10 @@ instance Serialize ACoreBindAspectKey where
 %%]]
 %%[[93
         7 -> return ACoreBindAspectKey_FusionRole
+%%]]
+%%[[(8 codegen strictana)
+        8 -> return ACoreBindAspectKey_RelInfo
+        9 -> return ACoreBindAspectKey_EvalWrapper
 %%]]
 %%]
 

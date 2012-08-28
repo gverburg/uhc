@@ -456,20 +456,9 @@ getFuncStrictness _ = "L"
 ATTR AllCodeNT [ | | cTrf: SELF ]
 ATTR CodeAGItf [ | | cTrf: CModule ]
 
--- Collecting debug information
-SEM CExpr
-  | Lam        loc.deb = let s = showRelEnv @body.envOut
-                         in CExpr_Ann (CExprAnn_Debug s) @cTrf
-  | App        loc.deb = let s = printFuncStrictness @func.relTy 
-                         in CExpr_Ann (CExprAnn_Debug s) @cTrf  
-  | Let        loc.deb  = let s = "Ty: " ++ (concatMap (\(x,y) -> show x ++ "::" ++ (printFuncStrictness $ relTy $ fromJust y)) $ filter (\(x,y) -> isJust y) $ map (\x -> (x, Map.lookup x @loc.envOut)) @binds.nmL) 
-                          in CExpr_Ann (CExprAnn_Debug (s{-show @loc.discrLL-})) @cTrf   
-  | Case       loc.deb  = CExpr_Ann (CExprAnn_Debug "Case") @cTrf
-
 -- Replace every expr with an annotated expression with debug information and evaluation lists 
 SEM CExpr
-  | Let     lhs.cTrf = if null @loc.evalL then @loc.deb else CExpr_Ann (CExprAnn_Eval @loc.evalL) @loc.deb  
-  | * - Let lhs.cTrf = if null @loc.evalL then @cTrf else CExpr_Ann (CExprAnn_Eval @loc.evalL) @cTrf 
+  | *  lhs.cTrf = if null @loc.evalL then @cTrf else CExpr_Ann (CExprAnn_Eval @loc.evalL) @cTrf 
 %%]
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

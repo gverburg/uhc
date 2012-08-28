@@ -116,7 +116,7 @@ data LamInfoBindAsp
       { libindaspFusionRole 	:: !FusionRole
       }
 %%]]
-%%[[ strictana
+%%[[ (8 codegen strictana)
   | LamInfoBindAsp_RelInfo
       { libindaspRelInfo        :: !RelInfo           -- new relevance info
       }
@@ -138,7 +138,7 @@ instance PP LamInfoBindAsp where
 %%[[93
   pp (LamInfoBindAsp_FusionRole	r) = "Fuse" >#< pp r
 %%]]
-%%[[ strictana
+%%[[ (8 codegen strictana)
   pp (LamInfoBindAsp_RelInfo    i) = "RInfo" >#< pp i
 %%]]
 %%]
@@ -352,7 +352,7 @@ instance Serialize LamInfoBindAsp where
 %%[[(8888 coresysf)
   sput (LamInfoBindAsp_SysfTy   	a) = sputWord8 4 >> sput a
 %%]]
-%%[[ strictana
+%%[[ (8 codegen strictana)
   sput (LamInfoBindAsp_RelInfo      a) = sputWord8 5 >> sput a
 %%]]
   sget = do
@@ -367,7 +367,7 @@ instance Serialize LamInfoBindAsp where
 %%[[(8888 coresysf)
       4 -> liftM  LamInfoBindAsp_SysfTy		sget
 %%]]
-%%[[ strictana
+%%[[ (8 codegen strictana)
       5 -> liftM  LamInfoBindAsp_RelInfo    sget    
 %%]]
 
